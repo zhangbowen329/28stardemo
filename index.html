@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>二十八星宿：古老的星辰指引</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  
+  <style>
+    /* ================= 基础重置与美学变量 ================= */
+    * { box-sizing: border-box; }
+    :root {
+      --bg-a: #020205; --bg-b: #0c1430; --star: #fdf9e3; --star-soft: rgba(253, 249, 227, 0.72);
+      --star-faint: rgba(253, 249, 227, 0.42); --gold: #f1d58b;
+      --serif: "Songti SC", "SimSun", "Noto Serif SC", Georgia, serif;
+      --sans: "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+      --ease: cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    html, body { margin: 0; min-height: 100%; color: var(--star); background: var(--bg-a); font-family: var(--sans); overflow-x: hidden; user-select: none; }
+    button { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+    
+    /* ================= 沉浸式背景与画中画 ================= */
+    #cosmic-bg { position: fixed; inset: 0; z-index: 0; width: 100vw; height: 100vh; pointer-events: none; }
+    #cam-feed { position: fixed; bottom: 20px; right: 20px; width: 160px; height: 120px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; z-index: 100; transform: scaleX(-1); object-fit: cover; opacity: 0.6; pointer-events: none; transition: opacity 0.5s; }
+    .white-flash { position: fixed; inset: 0; z-index: 5; background: #fffdf2; opacity: 0; pointer-events: none; }
+    .white-flash.active { animation: flashBloom 900ms var(--ease) both; }
+    @keyframes flashBloom { 0% { opacity: 0; } 22% { opacity: 0.92; } 100% { opacity: 0; } }
+
+    /* ================= 全局体感光标 ================= */
+    #global-cursor {
+      position: fixed; top: 0; left: 0; width: 40px; height: 40px;
+      border: 3px solid rgba(77, 255, 255, 0.3); border-radius: 50%;
+      pointer-events: none; z-index: 9999; transform: translate(-50%, -50%);
+      display: none; transition: width 1.5s ease-out, height 1.5s ease-out, background 1.5s;
+    }
+    #global-cursor.loading { width: 10px; height: 10px; background: rgba(77, 255, 255, 0.9); border-color: rgba(77, 255, 255, 1); }
+
+    /* ================= UI 布局架构 ================= */
+    .app { position: relative; z-index: 2; width: min(1180px, calc(100% - 32px)); min-height: 100vh; margin: 0 auto; display: flex; align-items: center; justify-content: center; padding: 32px 0; overflow: hidden; }
+    .panel { position: absolute; inset: 32px 0; display: flex; align-items: center; justify-content: center; width: 100%; opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(36px) scale(0.985); filter: blur(8px); transition: all 1s cubic-bezier(0.25, 1, 0.5, 1); will-change: opacity, transform, filter; }
+    .panel.active { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0) scale(1); filter: blur(0); }
+    .panel:first-child { position: relative; inset: auto; }
+    .flow { width: 100%; }
+    .intro-flow { max-width: 840px; margin: 0 auto; text-align: center; display: grid; justify-items: center; gap: 26px; }
+    .quiz-flow, .interaction-flow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(310px, 0.86fr); gap: clamp(28px, 5vw, 72px); align-items: center; }
+    .copy-stack { display: grid; gap: 18px; align-content: center; min-height: 420px; }
+    
+    /* 文字排版 */
+    .kicker, .meta, .terminal-line { font-family: var(--mono); }
+    .kicker { margin: 0; color: var(--star-faint); font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; text-shadow: 0 0 18px rgba(253, 249, 227, 0.28); }
+    h1, h2 { margin: 0; font-family: var(--serif); font-weight: 500; line-height: 1.16; color: var(--star); letter-spacing: 0; text-shadow: 0 0 18px rgba(253, 249, 227, 0.48), 0 0 70px rgba(241, 213, 139, 0.2); }
+    h1 { font-size: clamp(42px, 8vw, 86px); } h2 { font-size: clamp(30px, 5vw, 58px); }
+    p { margin: 0; color: var(--star-soft); line-height: 1.85; text-shadow: 0 0 14px rgba(253, 249, 227, 0.2); }
+    .intro-text { max-width: 720px; font-size: clamp(16px, 2vw, 19px); }
+    
+    /* 进度条与按钮 */
+    .progress { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 12px; color: rgba(253, 249, 227, 0.62); font-family: var(--mono); font-size: 13px; }
+    .progress-track { flex: 1 1 220px; height: 4px; border-radius: 999px; background: rgba(253, 249, 227, 0.08); overflow: hidden; }
+    .progress-bar { width: 10%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgba(255,255,255,0.18), var(--gold), var(--star)); box-shadow: 0 0 26px rgba(253, 249, 227, 0.58); transition: width 1s var(--ease); }
+    .question-space { min-height: 420px; display: grid; align-content: center; gap: 26px; }
+    .question-text { color: var(--star); font-size: clamp(25px, 4vw, 42px); font-weight: 400; line-height: 1.34; text-shadow: 0 0 30px rgba(253, 249, 227, 0.34); }
+    .options { display: grid; gap: 18px; }
+    .option-btn, .glow-btn { position: relative; min-height: 54px; padding: 11px 0 13px; color: var(--star); text-align: left; text-shadow: 0 0 16px rgba(253, 249, 227, 0.32); transition: all 1s var(--ease); }
+    .glow-btn { min-width: 180px; text-align: center; font-family: var(--mono); letter-spacing: 0.08em; }
+    .option-btn::after, .glow-btn::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(253, 249, 227, 0.72), transparent); opacity: 0.42; transform: scaleX(0.68); transition: all 1s var(--ease); }
+    .option-btn:hover, .glow-btn:hover, .option-btn:focus, .glow-btn:focus { transform: translateY(-5px); text-shadow: 0 0 20px rgba(253, 249, 227, 0.72), 0 0 80px rgba(241, 213, 139, 0.3); outline: none;}
+    .option-btn:hover::after, .glow-btn:hover::after, .option-btn:focus::after, .glow-btn:focus::after { opacity: 1; transform: scaleX(1); box-shadow: 0 0 22px rgba(253, 249, 227, 0.42); }
+    .option-btn span:first-child { display: inline-block; min-width: 34px; color: var(--gold); font-family: var(--mono); font-weight: 700; }
+    
+    /* 交互画板与档案区 */
+    .cosmic-window { position: relative; width: min(560px, 86vw); aspect-ratio: 1; justify-self: center; border-radius: 50%; overflow: hidden; filter: drop-shadow(0 0 34px rgba(253, 249, 227, 0.14)) drop-shadow(0 0 90px rgba(100, 120, 210, 0.16)); }
+    #star-canvas { display: block; width: 100%; height: 100%; border-radius: 50%; background: transparent; touch-action: none; cursor: crosshair; }
+    .side-text { min-height: 430px; display: grid; align-content: center; gap: 18px; }
+    .result-name { margin: 0; color: var(--gold); font-family: var(--serif); font-size: clamp(42px, 7vw, 76px); font-weight: 500; line-height: 1.08; text-shadow: 0 0 30px rgba(253, 249, 227, 0.46), 0 0 90px rgba(241, 213, 139, 0.24); }
+    .terminal-line { color: rgba(253, 249, 227, 0.74); line-height: 1.7; text-shadow: 0 0 16px rgba(253, 249, 227, 0.26); transition: color 0.5s; font-size: 1.1rem;}
+    .archive-text { color: rgba(253, 249, 227, 0.84); line-height: 1.9; font-size: 16px; opacity: 0; transform: translateY(28px); filter: blur(8px); text-shadow: 0 0 16px rgba(253, 249, 227, 0.24); }
+    .archive-text.reveal { animation: fadeInUp 1.45s var(--ease) both; }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(28px); filter: blur(8px); } to { opacity: 1; transform: translateY(0); filter: blur(0); } }
+    .hidden { display: none !important; }
+
+    @media (max-width: 900px) { .quiz-flow, .interaction-flow { grid-template-columns: 1fr; } .copy-stack, .question-space, .side-text { min-height: auto; } }
+    @media (max-width: 520px) { .app { width: min(100% - 20px, 1180px); padding: 20px 0; } .panel { inset: 20px 0; } .glow-btn { min-width: 0; width: 100%; } }
+  </style>
+</head>
+<body>
+  <canvas id="cosmic-bg" aria-hidden="true"></canvas>
+  <div id="white-flash" class="white-flash" aria-hidden="true"></div>
+  <div id="global-cursor" aria-hidden="true"></div>
+  
+  <video id="cam-video" style="display:none;" autoplay playsinline></video>
+  <video id="cam-feed" autoplay playsinline></video>
+
+  <main class="app">
+    <section id="intro-panel" class="panel active" aria-label="序言面板">
+      <div class="flow intro-flow">
+        <p class="kicker">IMMERSIVE STELLAR FIELD</p>
+        <h1>二十八星宿：古老的星辰指引</h1>
+        <p class="intro-text">二十八星宿是古人观察月亮运行、辨认四时方位的星空坐标。青龙、朱雀、白虎、玄武分守四方，把漫长夜空化作可阅读的秩序。这一次，我们将利用空间体感技术，通过你的手势唤醒星空。</p>
+        <button id="start-quiz" class="glow-btn" type="button" disabled style="opacity: 0.5;">正在连接空间维度 (需允许摄像头)...</button>
+      </div>
+    </section>
+
+    <section id="quiz-panel" class="panel" aria-label="答题面板">
+      <div class="flow quiz-flow">
+        <div class="copy-stack">
+          <p class="kicker">PSYCHOLOGICAL ORBIT // 10 QUESTIONS</p>
+          <h2>28星宿心理测试</h2>
+          <p>请伸出【食指】对准选项，悬停1.5秒进行选择。星空会根据你的潜意识推演图腾。</p>
+          <div class="progress">
+            <span id="question-count">Q-01 / 10</span>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+            <span id="score-preview">SCORE 00</span>
+          </div>
+        </div>
+        <div class="question-space">
+          <div id="question-text" class="question-text"></div>
+          <div class="options">
+            <button id="option-a" class="option-btn" type="button"><span>A</span><span id="option-a-text"></span></button>
+            <button id="option-b" class="option-btn" type="button"><span>B</span><span id="option-b-text"></span></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="interaction-panel" class="panel" aria-label="互动面板">
+      <div class="flow interaction-flow">
+        <div class="cosmic-window">
+          <canvas id="star-canvas" width="500" height="500"></canvas>
+        </div>
+        <aside class="side-text">
+          <p class="kicker">CONSTELLATION AWAKENING</p>
+          <div id="result-name" class="result-name"></div>
+          <div id="interaction-status" class="terminal-line">等待维度接入...</div>
+          <p id="history-output" class="archive-text"></p>
+          <button id="restart-sky" class="glow-btn hidden" type="button">重新仰望星空</button>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    /* ================= 音频引擎加载 ================= */
+    const audioBGM = new Audio('assets/audio/bgm.mp3');
+    audioBGM.loop = true; audioBGM.volume = 0.5;
+    
+    const audioHover = new Audio('assets/audio/hover.mp3');
+    audioHover.volume = 0.6;
+    
+    const audioFusion = new Audio('assets/audio/fusion.mp3');
+    audioFusion.volume = 0.7;
+    
+    const audioConnect = new Audio('assets/audio/connect.mp3');
+    audioConnect.volume = 0.8;
+    
+    const audioReveal = new Audio('assets/audio/reveal.mp3');
+    audioReveal.volume = 0.9;
+
+    /* ================= 数据结构区 ================= */
+    const questions = [
+      { text: "早上起床后，你更想做什么？", a: "安静坐一会儿", b: "马上去玩" },
+      { text: "看到新朋友，你通常会怎样？", a: "先观察一下", b: "主动打招呼" },
+      { text: "你喜欢哪种天气？", a: "晴朗安稳", b: "有风有变化" },
+      { text: "玩游戏时，你更喜欢什么？", a: "慢慢想办法", b: "大胆试一试" },
+      { text: "听故事时，你更喜欢哪一种？", a: "温柔的故事", b: "冒险的故事" },
+      { text: "遇到小困难，你会怎么做？", a: "停下来想想", b: "马上再试一次" },
+      { text: "你更喜欢哪种颜色？", a: "柔和的浅色", b: "明亮的亮色" },
+      { text: "在一群人里，你更常怎样？", a: "认真听大家说", b: "说出自己的想法" },
+      { text: "如果去看星星，你想怎样看？", a: "安静地看很久", b: "边看边找图案" },
+      { text: "收到一份礼物，你会怎样？", a: "慢慢打开", b: "马上打开" }
+    ];
+
+    const results = [
+      { id: "KANG-DRAGON", name: "亢金龙", min: 0, max: 1, image: "assets/totems/kang_dragon.png", history_desc: "亢宿属东方苍龙第二宿，古人视其为龙颈，承接角宿之后的春季星象。其距星在室女座附近，夜间位置变化可辅助判断仲春前后时令。", stars: [{ x: 160, y: 120 }, { x: 240, y: 95 }, { x: 330, y: 150 }, { x: 300, y: 260 }, { x: 210, y: 330 }, { x: 145, y: 240 }] },
+      { id: "XIN-FOX", name: "心月狐", min: 2, max: 2, image: "assets/totems/xin_fox.png", history_desc: "心宿属东方苍龙第五宿，常被看作苍龙之心，主体与天蝎座亮星区域相近。古籍把心宿与王者、火象和夏夜观测相连，黄昏见其位置升降，可提示季节转入盛暑。", stars: [{ x: 170, y: 150 }, { x: 250, y: 105 }, { x: 330, y: 150 }, { x: 305, y: 250 }, { x: 250, y: 315 }, { x: 195, y: 250 }] },
+      { id: "WEI-TIGER", name: "尾火虎", min: 3, max: 4, image: "assets/totems/wei_tiger.png", history_desc: "尾宿为东方苍龙第六宿，象征龙尾，多数星官落在天蝎座附近。其星列弯曲如尾，便于肉眼连缀识别。", stars: [{ x: 120, y: 330 }, { x: 180, y: 180 }, { x: 260, y: 120 }, { x: 340, y: 180 }, { x: 390, y: 330 }] },
+      { id: "FANG-RABBIT", name: "房日兔", min: 5, max: 5, image: "assets/totems/fang_rabbit.png", history_desc: "房宿是东方苍龙第四宿，古人称其为龙腹或天驷，位置接近天蝎座头部。房字含居室、库藏之意，在礼制星象中常关联宫室与车马。", stars: [{ x: 190, y: 130 }, { x: 310, y: 130 }, { x: 350, y: 245 }, { x: 250, y: 340 }, { x: 150, y: 245 }] },
+      { id: "XING-HORSE", name: "星日马", min: 6, max: 7, image: "assets/totems/xing_horse.png", history_desc: "星宿属南方朱雀七宿之一，主体在长蛇座一带，是朱雀胸腹附近的明亮标识。夏季夜空中，它与柳、张等宿相邻，便于连续追踪月亮东移。", stars: [{ x: 115, y: 280 }, { x: 190, y: 190 }, { x: 280, y: 170 }, { x: 370, y: 210 }, { x: 405, y: 305 }, { x: 275, y: 330 }] },
+      { id: "LOU-DOG", name: "娄金狗", min: 8, max: 8, image: "assets/totems/lou_dog.png", history_desc: "娄宿为西方白虎第二宿，古义有聚众、系束之象，主要对应白羊座附近天区。秋季黄昏，白虎诸宿逐渐成为夜空参照。", stars: [{ x: 150, y: 165 }, { x: 260, y: 115 }, { x: 360, y: 180 }, { x: 335, y: 310 }, { x: 200, y: 335 }] },
+      { id: "WEI-SWALLOW", name: "危月燕", min: 9, max: 9, image: "assets/totems/wei_swallow.png", history_desc: "危宿属北方玄武第五宿，邻近宝瓶座、飞马座等秋冬夜空区域，古义含屋脊、高危之象。它与虚、室相接，构成北方玄武的连续标尺。", stars: [{ x: 100, y: 250 }, { x: 210, y: 170 }, { x: 250, y: 110 }, { x: 290, y: 170 }, { x: 400, y: 250 }, { x: 250, y: 330 }] },
+      { id: "WEI-PHEASANT", name: "胃土雉", min: 10, max: 10, image: "assets/totems/wei_pheasant.png", history_desc: "胃宿是西方白虎第三宿，位于白羊座附近，名称取仓廪、胃腑之象，古人常把它与收藏、供养联系。", stars: [{ x: 250, y: 95 }, { x: 335, y: 190 }, { x: 310, y: 320 }, { x: 190, y: 320 }, { x: 165, y: 190 }] }
+    ];
+
+    /* ================= DOM 元素与全局变量 ================= */
+    const introPanel = document.getElementById("intro-panel");
+    const quizPanel = document.getElementById("quiz-panel");
+    const interactionPanel = document.getElementById("interaction-panel");
+    const startQuizBtn = document.getElementById("start-quiz");
+    const questionCount = document.getElementById("question-count");
+    const progressBar = document.getElementById("progress-bar");
+    const scorePreview = document.getElementById("score-preview");
+    const questionText = document.getElementById("question-text");
+    const optionAText = document.getElementById("option-a-text");
+    const optionBText = document.getElementById("option-b-text");
+    const optionA = document.getElementById("option-a");
+    const optionB = document.getElementById("option-b");
+    const resultName = document.getElementById("result-name");
+    const interactionStatus = document.getElementById("interaction-status");
+    const historyOutput = document.getElementById("history-output");
+    const restartSky = document.getElementById("restart-sky");
+    const whiteFlash = document.getElementById("white-flash");
+    
+    // Canvas 层
+    const canvas = document.getElementById("star-canvas");
+    const ctx = canvas.getContext("2d");
+    const bgCanvas = document.getElementById("cosmic-bg");
+    const bgCtx = bgCanvas.getContext("2d");
+    const fogCanvas = document.createElement("canvas");
+    const fogCtx = fogCanvas.getContext("2d");
+    
+    // MediaPipe 层
+    const videoElement = document.getElementById("cam-video");
+    const feedElement = document.getElementById("cam-feed");
+    const globalCursor = document.getElementById('global-cursor');
+
+    // 核心流转变量
+    let currentQuestion = 0, score = 0, currentResult = null;
+    let particles = [], bgFrame = null, stageFrame = null;
+    let phase = "idle"; // 状态机流转
+    let stars = [], connections = [], startStar = null;
+    let totemImage = new Image(), fogOpacity = 1, scratchDistance = 0, lastScratchPoint = null, lastTime = performance.now();
+    
+    // 手势与光标控制变量
+    let handCursor = { x: 250, y: 250, active: false, gesture: 'none' };
+    let isDrawing = false;
+    let cameraReady = false;
+    let hoverStartTime = 0;
+    let hoveringBtn = null;
+    let isFistingAudioPlaying = false; // 控制聚变音效防抖
+
+    /* ================= 测试流程系统 ================= */
+    function showPanel(panel) {
+      [introPanel, quizPanel, interactionPanel].forEach(item => item.classList.remove("active"));
+      panel.classList.add("active");
+    }
+
+    function renderQuestion() {
+      const q = questions[currentQuestion];
+      questionCount.textContent = `Q-${String(currentQuestion + 1).padStart(2, "0")} / 10`;
+      scorePreview.textContent = `SCORE ${String(score).padStart(2, "0")}`;
+      progressBar.style.width = `${((currentQuestion + 1) / questions.length) * 100}%`;
+      questionText.textContent = q.text; optionAText.textContent = q.a; optionBText.textContent = q.b;
+    }
+
+    function answerQuestion(point) {
+      score += point; currentQuestion += 1;
+      if (currentQuestion >= questions.length) {
+        currentResult = getResultByScore(score);
+        startInteraction(); return;
+      }
+      renderQuestion();
+    }
+    
+    function getResultByScore(s) { return results.find(item => s >= item.min && s <= item.max); }
+
+    /* ================= 背景流体粒子引擎 ================= */
+    function initParticleBackground() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = window.innerWidth, h = window.innerHeight;
+      bgCanvas.width = Math.floor(w * dpr); bgCanvas.height = Math.floor(h * dpr);
+      bgCanvas.style.width = `${w}px`; bgCanvas.style.height = `${h}px`;
+      bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      particles = Array.from({ length: 150 }, (_, i) => {
+        const d = Math.random();
+        return { x: Math.random() * w, y: Math.random() * h, size: 0.6 + d * 2.8, speed: 0.07 + d * 0.3, alpha: 0.12 + d * 0.62, phase: Math.random() * Math.PI * 2, drift: 0.2 + Math.random() * 0.8, tone: i % 6 === 0 ? "rgba(241, 213, 139," : "rgba(253, 249, 227," };
+      });
+    }
+
+    function drawParticleBackground() {
+      const w = window.innerWidth, h = window.innerHeight, t = performance.now() / 1000;
+      bgCtx.clearRect(0, 0, w, h);
+      const sky = bgCtx.createRadialGradient(w * 0.5, h * 0.56, 0, w * 0.5, h * 0.56, Math.max(w, h) * 0.8);
+      sky.addColorStop(0, "#0c1430"); sky.addColorStop(0.5, "#050716"); sky.addColorStop(1, "#020205");
+      bgCtx.fillStyle = sky; bgCtx.fillRect(0, 0, w, h);
+
+      particles.forEach((p, i) => {
+        const breath = 0.55 + Math.sin(t * 0.86 + p.phase) * 0.45;
+        const x = p.x + Math.sin(t * p.drift + p.phase) * (12 + p.size * 7), y = p.y;
+        const a = p.alpha * (0.35 + breath * 0.65), r = p.size * (7 + breath * 4);
+        bgCtx.save(); bgCtx.globalCompositeOperation = "lighter";
+        const glow = bgCtx.createRadialGradient(x, y, 0, x, y, r);
+        glow.addColorStop(0, `${p.tone}${a})`); glow.addColorStop(0.36, `${p.tone}${a * 0.28})`); glow.addColorStop(1, `${p.tone}0)`);
+        bgCtx.fillStyle = glow; bgCtx.beginPath(); bgCtx.arc(x, y, r, 0, Math.PI * 2); bgCtx.fill();
+        bgCtx.fillStyle = `${p.tone}${Math.min(1, a + 0.18)})`; bgCtx.beginPath(); bgCtx.arc(x, y, p.size, 0, Math.PI * 2); bgCtx.fill(); bgCtx.restore();
+        p.y -= p.speed; p.x += Math.sin(t * 0.18 + i) * 0.015;
+        if (p.y < -30) { p.y = h + 30; p.x = Math.random() * w; p.phase = Math.random() * Math.PI * 2; }
+      });
+      bgFrame = requestAnimationFrame(drawParticleBackground);
+    }
+
+    /* ================= MediaPipe 手势识别与坐标映射 ================= */
+    function detectGesture(landmarks) {
+      const wrist = landmarks[0];
+      const getDist = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+      const indexTipD = getDist(landmarks[8], wrist), indexMcpD = getDist(landmarks[5], wrist);
+      const midTipD = getDist(landmarks[12], wrist), midMcpD = getDist(landmarks[9], wrist);
+      const ringTipD = getDist(landmarks[16], wrist), ringMcpD = getDist(landmarks[13], wrist);
+      const pinkyTipD = getDist(landmarks[20], wrist), pinkyMcpD = getDist(landmarks[17], wrist);
+
+      const isIndexExt = indexTipD > indexMcpD * 1.3;
+      const isMidExt = midTipD > midMcpD * 1.3;
+      const isRingExt = ringTipD > ringMcpD * 1.3;
+      const isPinkyExt = pinkyTipD > pinkyMcpD * 1.3;
+      const extCount = [isIndexExt, isMidExt, isRingExt, isPinkyExt].filter(Boolean).length;
+
+      if (extCount === 0) return 'fist';  
+      if (extCount >= 3) return 'palm';   
+      if (isIndexExt && !isMidExt && !isRingExt && !isPinkyExt) return 'index'; 
+      return 'none';
+    }
+
+    function onHandsResults(results) {
+      if (!cameraReady) {
+        cameraReady = true;
+        startQuizBtn.textContent = "开始测试";
+        startQuizBtn.style.opacity = "1";
+        startQuizBtn.disabled = false;
+      }
+      
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const lm = results.multiHandLandmarks[0];
+        handCursor.active = true;
+        handCursor.gesture = detectGesture(lm);
+        
+        // 悬停交互逻辑 (idle答题阶段)
+        if (phase === "idle") {
+          const screenX = (1 - lm[8].x) * window.innerWidth;
+          const screenY = lm[8].y * window.innerHeight;
+          globalCursor.style.display = 'block';
+          globalCursor.style.left = screenX + 'px';
+          globalCursor.style.top = screenY + 'px';
+          
+          handCursor.x = -100; handCursor.y = -100; 
+
+          const targetEl = document.elementFromPoint(screenX, screenY);
+          const btn = targetEl ? targetEl.closest('.option-btn, .glow-btn') : null;
+
+          if (btn) {
+            btn.focus();
+            if (hoveringBtn !== btn) {
+              hoveringBtn = btn;
+              hoverStartTime = performance.now();
+              globalCursor.classList.add('loading');
+              // 触发聚能锁定音效
+              audioHover.currentTime = 0; 
+              audioHover.play().catch(e => console.log("Audio blocked:", e));
+            } else {
+              if (performance.now() - hoverStartTime > 1500) {
+                // 悬停满足，停止音效并点击
+                audioHover.pause(); audioHover.currentTime = 0;
+                btn.click();
+                hoveringBtn = null;
+                globalCursor.classList.remove('loading');
+                whiteFlash.classList.remove("active"); void whiteFlash.offsetWidth; whiteFlash.classList.add("active");
+              }
+            }
+          } else {
+            // 移出按钮，打断施法
+            if (hoveringBtn !== null) {
+              hoveringBtn = null;
+              globalCursor.classList.remove('loading');
+              audioHover.pause(); audioHover.currentTime = 0;
+            }
+            if (document.activeElement) document.activeElement.blur();
+          }
+        } 
+        // 核心画布交互逻辑
+        else {
+          globalCursor.style.display = 'none';
+          let targetPt = handCursor.gesture === 'index' ? lm[8] : lm[9];
+          handCursor.x = (1 - targetPt.x) * 500; 
+          handCursor.y = targetPt.y * 500;
+        }
+      } else {
+        // 未检测到手部时的清理
+        handCursor.active = false; handCursor.gesture = 'none';
+        if (globalCursor) { globalCursor.style.display = 'none'; globalCursor.classList.remove('loading'); }
+        if (hoveringBtn !== null) { hoveringBtn = null; audioHover.pause(); audioHover.currentTime = 0; }
+      }
+    }
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    hands.onResults(onHandsResults);
+    const camera = new Camera(videoElement, { onFrame: async () => { 
+      await hands.send({image: videoElement}); 
+      if(videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) feedElement.srcObject = videoElement.srcObject;
+    }, width: 640, height: 480 });
+    camera.start();
+
+    /* ================= Canvas 状态流转引擎 ================= */
+    function startInteraction() {
+      resultName.textContent = currentResult.name;
+      interactionStatus.style.color = "#fdf9e3";
+      interactionStatus.textContent = "面对镜头【握紧拳头】，以意念凝聚星辰";
+      historyOutput.textContent = ""; historyOutput.classList.remove("reveal"); restartSky.classList.add("hidden");
+      
+      phase = "fusion"; connections = []; startStar = null; isDrawing = false;
+      fogOpacity = 1; scratchDistance = 0;
+      totemImage = new Image(); totemImage.src = currentResult.image;
+      initFusionStars(); resizeFog(); showPanel(interactionPanel); startStageLoop();
+    }
+
+    function initFusionStars() {
+      const c = { x: 250, y: 250 }, r = 248;
+      stars = currentResult.stars.map((tgt, i) => {
+        const ang = (Math.PI * 2 * i) / currentResult.stars.length + Math.PI * 0.18;
+        const sr = r + 20 + Math.random() * 44;
+        const sx = c.x + Math.cos(ang) * sr, sy = c.y + Math.sin(ang) * sr;
+        return { x: sx, y: sy, targetX: tgt.x, targetY: tgt.y, scatterX: sx, scatterY: sy, phase: Math.random() * Math.PI * 2 };
+      });
+    }
+
+    function resizeFog() { fogCanvas.width = 500; fogCanvas.height = 500; initFogLayer(); }
+    function initFogLayer() {
+      fogCtx.clearRect(0, 0, 500, 500);
+      const f = fogCtx.createRadialGradient(250, 250, 30, 250, 250, 290);
+      f.addColorStop(0, "rgba(31, 45, 92, 0.98)"); f.addColorStop(0.55, "rgba(10, 16, 45, 0.98)"); f.addColorStop(1, "rgba(2, 2, 8, 0.96)");
+      fogCtx.fillStyle = f; fogCtx.fillRect(0, 0, 500, 500);
+      for (let i = 0; i < 260; i++) {
+        const r = 0.7 + Math.random() * 2.2;
+        fogCtx.fillStyle = i % 7 === 0 ? "rgba(241, 213, 139, 0.55)" : "rgba(253, 249, 227, 0.34)";
+        fogCtx.beginPath(); fogCtx.arc(Math.random() * 500, Math.random() * 500, r, 0, Math.PI * 2); fogCtx.fill();
+      }
+    }
+
+    function startStageLoop() { stopStageLoop(); lastTime = performance.now(); stageFrame = requestAnimationFrame(loop); }
+    function stopStageLoop() { if (stageFrame) cancelAnimationFrame(stageFrame); stageFrame = null; }
+
+    function loop(now) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      updateStage(dt); drawStage(now / 1000);
+      stageFrame = requestAnimationFrame(loop);
+    }
+
+    function getHoveredStar(x, y) { return stars.find(s => Math.hypot(s.x - x, s.y - y) < 35); }
+
+    function updateStage(dt) {
+      // 1. 引力聚变阶段
+      if (phase === "fusion") {
+        let complete = true;
+        const isFist = (handCursor.active && handCursor.gesture === 'fist');
+        interactionStatus.style.color = isFist ? "#ff4d4d" : "#fdf9e3";
+
+        // 处理聚变音效防抖
+        if (isFist && !isFistingAudioPlaying) {
+          isFistingAudioPlaying = true;
+          audioFusion.currentTime = 0;
+          audioFusion.play().catch(e => console.log("Audio blocked:", e));
+        } else if (!isFist && isFistingAudioPlaying) {
+          isFistingAudioPlaying = false;
+          audioFusion.pause();
+        }
+
+        stars.forEach(s => {
+          if (isFist) { s.x += (s.targetX - s.x) * 0.035; s.y += (s.targetY - s.y) * 0.035; } 
+          else { s.x += (s.scatterX - s.x) * 0.014; s.y += (s.scatterY - s.y) * 0.014; }
+          if (Math.hypot(s.x - s.targetX, s.y - s.targetY) > 3.2) complete = false;
+        });
+        
+        if (complete) {
+          isFistingAudioPlaying = false;
+          audioFusion.pause();
+          triggerConnectPhase();
+        }
+      }
+
+      // 2. 一指连线阶段
+      if (phase === "connect") {
+        const isPoint = (handCursor.active && handCursor.gesture === 'index');
+        interactionStatus.style.color = isPoint ? "#4dffff" : "#fdf9e3";
+
+        if (isPoint) {
+          const tgtStar = getHoveredStar(handCursor.x, handCursor.y);
+          if (tgtStar) {
+            if (!isDrawing) { isDrawing = true; startStar = tgtStar; }
+            else if (tgtStar !== startStar) {
+              connections.push({ from: startStar, to: tgtStar });
+              startStar = tgtStar; 
+              
+              // 触发连线清脆音效
+              audioConnect.currentTime = 0;
+              audioConnect.play().catch(e => console.log("Audio blocked:", e));
+              
+              if (connections.length >= stars.length - 1) triggerScratchPhase();
+            }
+          }
+        } else { isDrawing = false; startStar = null; }
+      }
+
+      // 3. 手掌擦拭阶段
+      if (phase === "scratch") {
+        const isPalm = (handCursor.active && handCursor.gesture === 'palm');
+        interactionStatus.style.color = isPalm ? "#ffff4d" : "#fdf9e3";
+
+        if (isPalm) {
+          eraseFog(handCursor);
+          if (lastScratchPoint) scratchDistance += Math.hypot(handCursor.x - lastScratchPoint.x, handCursor.y - lastScratchPoint.y);
+          lastScratchPoint = { x: handCursor.x, y: handCursor.y };
+          if (scratchDistance > 1800) phase = "mist-fade";
+        } else { lastScratchPoint = null; }
+      }
+
+      // 4. 迷雾消散与结局
+      if (phase === "mist-fade") {
+        fogOpacity = Math.max(0, fogOpacity - dt * 0.9);
+        if (fogOpacity <= 0) { 
+          phase = "final"; 
+          feedElement.style.opacity = "0"; 
+          revealArchive(); 
+        }
+      }
+    }
+
+    function triggerConnectPhase() {
+      phase = "connect";
+      interactionStatus.textContent = "伸出【单根食指】，在星辰之间划出连线";
+      stars.forEach(s => { s.x = s.targetX; s.y = s.targetY; });
+      whiteFlash.classList.remove("active"); void whiteFlash.offsetWidth; whiteFlash.classList.add("active");
+    }
+
+    function triggerScratchPhase() {
+      phase = "scratch"; isDrawing = false;
+      interactionStatus.textContent = "【张开手掌】如擦拭玻璃般挥舞，拂去星尘";
+      whiteFlash.classList.remove("active"); void whiteFlash.offsetWidth; whiteFlash.classList.add("active");
+      initFogLayer(); fogOpacity = 1;
+    }
+
+    function revealArchive() {
+      // 触发图腾完全显现的宏大音效
+      audioReveal.currentTime = 0;
+      audioReveal.play().catch(e => console.log("Audio blocked:", e));
+
+      interactionStatus.textContent = "图腾已唤醒"; interactionStatus.style.color = "#fdf9e3";
+      historyOutput.textContent = currentResult.history_desc;
+      historyOutput.classList.add("reveal"); restartSky.classList.remove("hidden");
+    }
+
+    function eraseFog(pt) {
+      fogCtx.save(); fogCtx.globalCompositeOperation = "destination-out";
+      const b = fogCtx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, 55);
+      b.addColorStop(0, "rgba(0,0,0,1)"); b.addColorStop(0.5, "rgba(0,0,0,0.6)"); b.addColorStop(1, "rgba(0,0,0,0)");
+      fogCtx.fillStyle = b; fogCtx.beginPath(); fogCtx.arc(pt.x, pt.y, 55, 0, Math.PI * 2); fogCtx.fill(); fogCtx.restore();
+    }
+
+    /* ================= Canvas 视觉渲染库 ================= */
+    function drawStage(t) {
+      ctx.clearRect(0, 0, 500, 500); drawCircularField(t);
+      if (phase === "fusion") { stars.forEach((s, i) => drawBreathingStar(s.x, s.y, t, i)); }
+      else if (phase === "connect") { drawUserConnections(); stars.forEach((s, i) => drawBreathingStar(s.x, s.y, t, i)); }
+      else { drawTotem(t); drawFinalConstellation(t); if (fogOpacity > 0) { ctx.save(); ctx.globalAlpha = fogOpacity; ctx.drawImage(fogCanvas, 0, 0); ctx.restore(); } }
+      drawHandCursorHUD();
+    }
+
+    function drawHandCursorHUD() {
+      if (!handCursor.active || phase === "idle" || phase === "mist-fade" || phase === "final") return;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(handCursor.x, handCursor.y, 8, 0, Math.PI*2);
+      ctx.fillStyle = handCursor.gesture === 'fist' ? '#ff4d4d' : handCursor.gesture === 'index' ? '#4dffff' : handCursor.gesture === 'palm' ? '#ffff4d' : 'rgba(255,255,255,0.4)';
+      ctx.fill(); ctx.shadowBlur = 15; ctx.shadowColor = ctx.fillStyle;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(handCursor.x, handCursor.y, 16 + Math.sin(Date.now()*0.01)*3, 0, Math.PI*2);
+      ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawCircularField(t) {
+      const g = ctx.createRadialGradient(250, 250, 10, 250, 250, 275);
+      g.addColorStop(0, "rgba(253, 249, 227, 0.055)"); g.addColorStop(0.45, "rgba(66, 83, 160, 0.08)"); g.addColorStop(1, "rgba(2, 2, 5, 0.1)");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 500, 500);
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      for (let i = 0; i < 52; i++) {
+        const x = (Math.sin(t * 0.18 + i * 1.7) * 0.5 + 0.5) * 500, y = (Math.cos(t * 0.14 + i * 2.3) * 0.5 + 0.5) * 500;
+        ctx.fillStyle = `rgba(253, 249, 227, ${0.08 + (Math.sin(t + i) + 1) * 0.08})`;
+        ctx.beginPath(); ctx.arc(x, y, 0.8 + (i % 5) * 0.26, 0, Math.PI * 2); ctx.fill();
+      } ctx.restore();
+    }
+
+    function drawUserConnections() {
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.shadowColor = "rgba(253, 249, 227, 0.65)"; ctx.shadowBlur = 15; ctx.strokeStyle = "rgba(253, 249, 227, 0.6)"; ctx.lineWidth = 3;
+      connections.forEach(c => { ctx.beginPath(); ctx.moveTo(c.from.x, c.from.y); ctx.lineTo(c.to.x, c.to.y); ctx.stroke(); });
+      if (isDrawing && startStar) { ctx.strokeStyle = "rgba(77, 255, 255, 0.5)"; ctx.beginPath(); ctx.moveTo(startStar.x, startStar.y); ctx.lineTo(handCursor.x, handCursor.y); ctx.stroke(); }
+      ctx.restore();
+    }
+
+    function drawFinalConstellation(t) {
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(253, 249, 227, 0.4)"; ctx.shadowColor = "rgba(253, 249, 227, 0.75)"; ctx.shadowBlur = 18; ctx.lineWidth = 2.3;
+      ctx.beginPath(); currentResult.stars.forEach((s, i) => { if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); });
+      ctx.stroke(); ctx.restore();
+      currentResult.stars.forEach((s, i) => drawBreathingStar(s.x, s.y, t, i));
+    }
+
+    function drawBreathingStar(x, y, t, i) {
+      const p = 0.5 + Math.sin(t * 2.1 + i * 1.4) * 0.5, ar = 22 + p * 24;
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      const aura = ctx.createRadialGradient(x, y, 0, x, y, ar);
+      aura.addColorStop(0, "rgba(253, 249, 227, 0.62)"); aura.addColorStop(0.35, "rgba(241, 213, 139, 0.22)"); aura.addColorStop(1, "rgba(253, 249, 227, 0)");
+      ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(x, y, ar, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowColor = "rgba(253, 249, 227, 0.9)"; ctx.shadowBlur = 16 + p * 18;
+      ctx.fillStyle = "#fffbe9"; ctx.beginPath(); ctx.arc(x, y, 5.6 + p * 1.8, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+
+    function drawTotem(t) {
+      if (!totemImage.complete) return;
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.globalAlpha = phase === "scratch" || phase === "mist-fade" || phase === "final" ? 0.94 : 0;
+      ctx.filter = "drop-shadow(0 0 34px rgba(253, 249, 227, 0.55)) saturate(1.12)";
+      ctx.drawImage(totemImage, 0, 0, 500, 500); ctx.filter = "none";
+      ctx.globalAlpha = 0.11; ctx.fillStyle = "#fdf9e3";
+      for (let y = (Math.sin(t * 2.2) + 1) * 8; y < 500; y += 15) { ctx.fillRect(0, y, 500, 1); } ctx.restore();
+    }
+
+    /* ================= 系统挂载点 ================= */
+    startQuizBtn.addEventListener("click", () => {
+      showPanel(quizPanel);
+      // 解锁并播放宇宙环境音
+      audioBGM.play().catch(e => console.log("BGM blocked, user may need to physically click the screen.", e));
+    });
+    
+    optionA.addEventListener("click", () => answerQuestion(0));
+    optionB.addEventListener("click", () => answerQuestion(1));
+    restartSky.addEventListener("click", () => window.location.reload());
+    window.addEventListener("resize", () => { cancelAnimationFrame(bgFrame); initParticleBackground(); drawParticleBackground(); });
+
+    // 系统启动
+    initParticleBackground(); drawParticleBackground(); renderQuestion();
+  </script>
+</body>
+</html>
